@@ -1,10 +1,10 @@
-# Elysia Backend Makefile
+# Elysia chat-agent Makefile
 
 .PHONY: help build run test clean deps setup proto install-tools
 
 # 默认目标
 help:
-	@echo "Elysia Backend 构建工具"
+	@echo "Elysia chat-agent 构建工具"
 	@echo ""
 	@echo "可用命令:"
 	@echo "  make deps          - 下载依赖"

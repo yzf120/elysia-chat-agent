@@ -5,6 +5,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/yzf120/elysia-chat-agent/client"
 	"github.com/yzf120/elysia-chat-agent/dao"
+	agent "github.com/yzf120/elysia-chat-agent/proto/agent"
 	"github.com/yzf120/elysia-chat-agent/router"
 	"log"
 	"trpc.group/trpc-go/trpc-go"
@@ -36,6 +37,7 @@ func main() {
 
 	// 创建trpc服务器
 	s := trpc.NewServer()
+	agent.RegisterAgentServiceService(s.Service("trpc.elysia.chat_agent.agent"), nil)
 	router.Init()
 
 	// 启动服务器

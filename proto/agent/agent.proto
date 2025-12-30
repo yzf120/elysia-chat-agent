@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package trpc.elysia.backend.agent;
+package trpc.elysia.chat_agent.agent;
 option go_package="github.com/yzf120/elysia-chat-agent/proto/agent";
 
 service AgentService {
