@@ -15,12 +15,13 @@ server:
       network: tcp
       protocol: http_no_protocol
       timeout: 3000
+    # Agent RPC 服务（支持流式）
     - name: trpc.elysia.chat_agent.agent
       ip: 0.0.0.0
       port: 8081
       network: tcp
       protocol: trpc
-      timeout: 3000
+      timeout: 0 # 不设超时，深度思考模型可能需要较长时间
 
   # 管理端口配置
   admin:
@@ -28,6 +29,17 @@ server:
     port: 9028
     read_timeout: 3000
     write_timeout: 3000
+
+# 客户端配置
+client:
+  timeout: 120000
+  service:
+    # llm-tool RPC 服务
+    - name: trpc.elysia.llmtool.LLMService
+      target: ip://127.0.0.1:9001
+      timeout: 120000 # 120秒超时，支持长时间流式响应
+      network: tcp
+      protocol: trpc
 
 # 插件配置
 plugins:

@@ -9,7 +9,38 @@ service AgentService {
   rpc UpdateAgent (UpdateAgentRequest) returns (UpdateAgentResponse) {}
   rpc DeleteAgent (DeleteAgentRequest) returns (DeleteAgentResponse) {}
   rpc ExecuteAgent (ExecuteAgentRequest) returns (ExecuteAgentResponse) {}
+
+  // 流式对话接口（Agent处理后流式返回）
+  rpc StreamChat (AgentStreamChatRequest) returns (stream AgentStreamChatResponse) {}
 }
+
+// ===== 流式对话消息 =====
+
+// 对话消息
+message AgentChatMessage {
+  string role = 1;    // system, user, assistant
+  string content = 2; // 消息内容
+}
+
+// 流式对话请求
+message AgentStreamChatRequest {
+  string model_id = 1;                    // 模型ID，如 "doubao-seed-1-6-lite-251015"
+  repeated AgentChatMessage messages = 2; // 对话历史（含本次用户消息）
+  string system_prompt = 3;               // 系统提示词（可选，会插入到消息最前面）
+  map<string, string> extra_params = 4;   // 额外参数
+}
+
+// 流式对话响应（每个chunk）
+message AgentStreamChatResponse {
+  string content = 1;   // 本次增量内容
+  bool is_end = 2;      // 是否是最后一个chunk
+  string finish_reason = 3; // 结束原因：stop, length, content_filter
+  int32 prompt_tokens = 4;
+  int32 completion_tokens = 5;
+  int32 total_tokens = 6;
+}
+
+// ===== 原有消息类型 =====
 
 message CreateAgentRequest {
   string name = 1;
