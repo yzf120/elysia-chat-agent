@@ -11,9 +11,12 @@ import (
 	"sync"
 	"time"
 
+	reactagent "github.com/yzf120/elysia-chat-agent/agent"
+	"github.com/yzf120/elysia-chat-agent/model"
 	agent "github.com/yzf120/elysia-chat-agent/proto/agent"
 	"github.com/yzf120/elysia-chat-agent/rpc"
 	llmpb "github.com/yzf120/elysia-llm-tool/proto/llm"
+	"gorm.io/gorm"
 )
 
 // ===== 日志文件管理 =====
@@ -130,18 +133,98 @@ func buildLLMContentParts(content string) []*llmpb.ContentPart {
 }
 
 // AgentServiceImpl Agent 服务实现
-type AgentServiceImpl struct{}
+type AgentServiceImpl struct {
+	reactEngine *reactagent.ReactEngine
+	useReact    bool // 是否启用 ReAct 编排（可通过配置开关）
+}
 
 // NewAgentServiceImpl 创建 Agent 服务实现
 func NewAgentServiceImpl() *AgentServiceImpl {
-	return &AgentServiceImpl{}
+	return &AgentServiceImpl{
+		useReact: false, // 默认不启用 ReAct（需要数据库初始化后才能启用）
+	}
 }
 
-// StreamChat 流式对话：调用 llm-tool RPC，将流式结果透传给调用方
+// NewAgentServiceImplWithDB 创建带数据库的 Agent 服务实现（启用 ReAct 编排）
+func NewAgentServiceImplWithDB(db *gorm.DB) *AgentServiceImpl {
+	return &AgentServiceImpl{
+		reactEngine: reactagent.NewReactEngine(db),
+		useReact:    true,
+	}
+}
+
+// StreamChat 流式对话：支持 ReAct 编排模式和直通模式
 func (s *AgentServiceImpl) StreamChat(req *agent.AgentStreamChatRequest, stream agent.AgentService_StreamChatServer) error {
-	log.Printf("[AgentService] StreamChat 开始，模型: %s，消息数: %d", req.ModelID, len(req.Messages))
+	log.Printf("[AgentService] StreamChat 开始，模型: %s，消息数: %d, ReAct: %v", req.ModelID, len(req.Messages), s.useReact)
 	startTime := time.Now()
 
+	// ===== ReAct 编排模式 =====
+	if s.useReact && s.reactEngine != nil {
+		return s.streamChatWithReact(req, stream, startTime)
+	}
+
+	// ===== 直通模式（兼容原有逻辑）=====
+	return s.streamChatDirect(req, stream, startTime)
+}
+
+// streamChatWithReact ReAct 编排模式的流式对话
+func (s *AgentServiceImpl) streamChatWithReact(req *agent.AgentStreamChatRequest, stream agent.AgentService_StreamChatServer, startTime time.Time) error {
+	ctx := stream.Context()
+
+	// 构建 Agent 上下文
+	agentCtx := &model.AgentContext{
+		ModelID:     req.ModelID,
+		ExtraParams: req.ExtraParams,
+	}
+
+	// 从 extra_params 中提取上下文信息
+	if req.ExtraParams != nil {
+		agentCtx.UserID = req.ExtraParams["user_id"]
+		agentCtx.UserRole = req.ExtraParams["user_role"]
+		agentCtx.SessionID = req.ExtraParams["session_id"]
+		agentCtx.ProblemID = req.ExtraParams["problem_id"]
+		agentCtx.ProblemInfo = req.ExtraParams["problem_info"]
+		agentCtx.StudentCode = req.ExtraParams["student_code"]
+		agentCtx.JudgeResult = req.ExtraParams["judge_result"]
+		agentCtx.Language = req.ExtraParams["language"]
+		agentCtx.ErrorMessage = req.ExtraParams["error_message"]
+	}
+
+	// 默认角色为学生
+	if agentCtx.UserRole == "" {
+		agentCtx.UserRole = model.RoleStudent
+	}
+
+	// 转换消息格式
+	for _, msg := range req.Messages {
+		agentCtx.Messages = append(agentCtx.Messages, model.ChatMessage{
+			Role:    msg.Role,
+			Content: msg.Content,
+		})
+	}
+
+	// 提取用户最后一条消息作为原始查询
+	for i := len(req.Messages) - 1; i >= 0; i-- {
+		if req.Messages[i].Role == "user" {
+			agentCtx.OriginalQuery = req.Messages[i].Content
+			break
+		}
+	}
+
+	// 执行 ReAct 编排
+	err := s.reactEngine.Execute(ctx, agentCtx, stream)
+	if err != nil {
+		log.Printf("[AgentService] ReAct 编排失败: %v，降级到直通模式", err)
+		return s.streamChatDirect(req, stream, startTime)
+	}
+
+	durationMs := time.Since(startTime).Milliseconds()
+	log.Printf("[AgentService] StreamChat(ReAct) 完成，模型: %s，耗时: %dms", req.ModelID, durationMs)
+	return nil
+}
+
+// streamChatDirect 直通模式的流式对话（原有逻辑）
+func (s *AgentServiceImpl) streamChatDirect(req *agent.AgentStreamChatRequest, stream agent.AgentService_StreamChatServer, startTime time.Time) error {
 	// 构建发送给 llm-tool 的消息列表
 	llmMessages := make([]*llmpb.ChatMessage, 0, len(req.Messages)+1)
 
