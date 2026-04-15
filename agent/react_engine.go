@@ -23,21 +23,26 @@ import (
 
 // ReactEngine ReAct 编排引擎，串联意图分流 → RAG 检索 → 画像注入 → Prompt 选择 → LLM 调用
 type ReactEngine struct {
-	intentRouter *IntentRouter
-	intentDAO    *dao.IntentDAO
-	profileDAO   *dao.StudentProfileDAO
-	ragService   *rag.Service
-	maxSteps     int // ReAct 最大循环步数
+	intentRouter   *IntentRouter
+	intentDAO      *dao.IntentDAO
+	profileDAO     *dao.StudentProfileDAO
+	qaBehaviorDAO  *dao.QABehaviorDAO
+	qaProfileAgent *QAProfileAgent
+	ragService     *rag.Service
+	maxSteps       int // ReAct 最大循环步数
 }
 
 // NewReactEngine 创建 ReAct 编排引擎
 func NewReactEngine(db *gorm.DB) *ReactEngine {
+	qaDAO := dao.NewQABehaviorDAO(db)
 	return &ReactEngine{
-		intentRouter: NewIntentRouter(""),
-		intentDAO:    dao.NewIntentDAO(db),
-		profileDAO:   dao.NewStudentProfileDAO(db),
-		ragService:   rag.GetRAGService(),
-		maxSteps:     5,
+		intentRouter:   NewIntentRouter(""),
+		intentDAO:      dao.NewIntentDAO(db),
+		profileDAO:     dao.NewStudentProfileDAO(db),
+		qaBehaviorDAO:  qaDAO,
+		qaProfileAgent: NewQAProfileAgent(qaDAO, ""),
+		ragService:     rag.GetRAGService(),
+		maxSteps:       5,
 	}
 }
 
@@ -123,7 +128,8 @@ func (e *ReactEngine) Execute(ctx context.Context, agentCtx *model.AgentContext,
 	step4Start := time.Now()
 	log.Printf("[ReactEngine] Step 4: LLM 流式调用，模型: %s", agentCtx.ModelID)
 
-	err = e.streamLLMCall(ctx, agentCtx, systemPrompt, stream)
+	var fullResponse strings.Builder
+	err = e.streamLLMCallWithCapture(ctx, agentCtx, systemPrompt, stream, &fullResponse)
 
 	trace.Steps = append(trace.Steps, model.ReActStep{
 		StepType:   "action",
@@ -138,6 +144,15 @@ func (e *ReactEngine) Execute(ctx context.Context, agentCtx *model.AgentContext,
 
 	// ==================== Step 5: 记录意图识别结果 ====================
 	go e.recordIntent(agentCtx, time.Since(startTime).Milliseconds())
+
+	// ==================== Step 6: 异步问答画像分析 ====================
+	if agentCtx.UserRole == model.RoleStudent && e.qaProfileAgent != nil {
+		conversationTurns := len(agentCtx.Messages) / 2 // 粗略计算对话轮数
+		if conversationTurns < 1 {
+			conversationTurns = 1
+		}
+		e.qaProfileAgent.AnalyzeAndRecord(agentCtx, fullResponse.String(), agentCtx.ConversationId, conversationTurns)
+	}
 
 	trace.TotalSteps = len(trace.Steps)
 	trace.TotalTimeMs = time.Since(startTime).Milliseconds()
@@ -215,8 +230,8 @@ func (e *ReactEngine) buildSystemPrompt(agentCtx *model.AgentContext) string {
 	return prompt.GetSystemPromptByIntent(agentCtx)
 }
 
-// streamLLMCall 流式调用 LLM 并透传给调用方
-func (e *ReactEngine) streamLLMCall(ctx context.Context, agentCtx *model.AgentContext, systemPrompt string, stream agentpb.AgentService_StreamChatServer) error {
+// streamLLMCallWithCapture 流式调用 LLM 并透传给调用方，同时捕获完整回复
+func (e *ReactEngine) streamLLMCallWithCapture(ctx context.Context, agentCtx *model.AgentContext, systemPrompt string, stream agentpb.AgentService_StreamChatServer, fullResponse *strings.Builder) error {
 	// 构建 LLM 消息列表
 	llmMessages := make([]*llmpb.ChatMessage, 0, len(agentCtx.Messages)+1)
 
@@ -281,6 +296,11 @@ func (e *ReactEngine) streamLLMCall(ctx context.Context, agentCtx *model.AgentCo
 				content = choice.Delta.Content
 			}
 			finishReason = choice.FinishReason
+		}
+
+		// 捕获完整回复内容（用于问答画像分析）
+		if content != "" && fullResponse != nil {
+			fullResponse.WriteString(content)
 		}
 
 		if llmResp.Usage != nil {
@@ -375,4 +395,45 @@ func (e *ReactEngine) loadUserProfile(agentCtx *model.AgentContext) {
 
 	log.Printf("[ReactEngine] 学生画像已加载: user_id=%s, level=%s, accept_rate=%.2f%%, solved=%d",
 		agentCtx.UserID, profile.DifficultyLevel, profile.AcceptRate*100, profile.SolvedProblemCount)
+
+	// 加载最近10条问答行为记录
+	e.loadQABehaviors(agentCtx)
+}
+
+// loadQABehaviors 加载学生最近的问答行为记录到 UserProfile
+func (e *ReactEngine) loadQABehaviors(agentCtx *model.AgentContext) {
+	if e.qaBehaviorDAO == nil || agentCtx.UserID == "" || agentCtx.UserProfile == nil {
+		return
+	}
+
+	records, err := e.qaBehaviorDAO.GetRecentBehaviors(agentCtx.UserID, 10)
+	if err != nil {
+		log.Printf("[ReactEngine] 查询问答行为记录失败: %v", err)
+		return
+	}
+
+	if len(records) == 0 {
+		log.Printf("[ReactEngine] 无问答行为记录 (user_id=%s)", agentCtx.UserID)
+		return
+	}
+
+	summaries := make([]model.QABehaviorSummary, 0, len(records))
+	for _, r := range records {
+		var tags []string
+		if r.KnowledgeTags != "" {
+			_ = json.Unmarshal([]byte(r.KnowledgeTags), &tags)
+		}
+		summaries = append(summaries, model.QABehaviorSummary{
+			QuestionSummary:   r.QuestionSummary,
+			KnowledgeTags:     tags,
+			DifficultyScore:   r.DifficultyScore,
+			IntentCode:        r.IntentCode,
+			IsResolved:        r.IsResolved,
+			ConversationTurns: r.ConversationTurns,
+			ConversationTime:  r.ConversationTime.Format("2006-01-02 15:04"),
+		})
+	}
+
+	agentCtx.UserProfile.RecentQABehaviors = summaries
+	log.Printf("[ReactEngine] 问答行为记录已加载: user_id=%s, 记录数=%d", agentCtx.UserID, len(summaries))
 }

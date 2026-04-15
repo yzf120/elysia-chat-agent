@@ -1,14 +1,11 @@
-package service_impl
+package service
 
 import (
 	"context"
 	"fmt"
 	"io"
 	"log"
-	"os"
-	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	reactagent "github.com/yzf120/elysia-chat-agent/agent"
@@ -19,119 +16,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// ===== 日志文件管理 =====
-
-var (
-	llmLogger     *log.Logger
-	llmLoggerOnce sync.Once
-)
-
-// getLLMLogger 获取LLM回复日志记录器（单例，输出到 log/ 目录）
-func getLLMLogger() *log.Logger {
-	llmLoggerOnce.Do(func() {
-		logDir := "log"
-		if err := os.MkdirAll(logDir, 0755); err != nil {
-			log.Printf("[AgentService] 创建日志目录失败: %v，将使用标准输出", err)
-			llmLogger = log.New(os.Stdout, "[LLM] ", log.LstdFlags)
-			return
-		}
-		logFile := filepath.Join(logDir, "llm_response.log")
-		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			log.Printf("[AgentService] 打开日志文件失败: %v，将使用标准输出", err)
-			llmLogger = log.New(os.Stdout, "[LLM] ", log.LstdFlags)
-			return
-		}
-		llmLogger = log.New(f, "", 0)
-		log.Printf("[AgentService] LLM回复日志文件: %s", logFile)
-	})
-	return llmLogger
-}
-
-// logLLMResponse 记录LLM完整回复到日志文件
-func logLLMResponse(provider, modelID, systemPrompt string, messages []agent.AgentChatMessage, fullResponse string, durationMs int64) {
-	logger := getLLMLogger()
-	now := time.Now().Format("2006-01-02 15:04:05.000")
-
-	// 取最后一条用户消息
-	lastUserMsg := ""
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == "user" {
-			lastUserMsg = messages[i].Content
-			break
-		}
-	}
-
-	logger.Printf("========== [%s] ==========\n"+
-		"时间: %s\n"+
-		"提供商: %s | 模型: %s | 耗时: %dms\n"+
-		"用户消息: %s\n"+
-		"AI回复:\n%s\n",
-		provider,
-		now,
-		provider, modelID, durationMs,
-		lastUserMsg,
-		fullResponse,
-	)
-	_ = systemPrompt // 系统提示词不记录到日志（避免日志过大）
-}
-
-// ===== AgentServiceImpl =====
-
-// parseMessageContent 解析消息内容，提取文本和图片
-// 消息格式：文本内容\n[IMAGE:data:image/...;base64,...]\n[IMAGE:...]
-// 返回：文本内容、图片URL列表
-func parseMessageContent(content string) (text string, imageURLs []string) {
-	const imagePrefix = "[IMAGE:"
-	const imageSuffix = "]"
-
-	lines := strings.Split(content, "\n")
-	var textLines []string
-	for _, line := range lines {
-		if strings.HasPrefix(line, imagePrefix) && strings.HasSuffix(line, imageSuffix) {
-			// 提取图片URL（data:image/...;base64,...）
-			url := line[len(imagePrefix) : len(line)-len(imageSuffix)]
-			if url != "" {
-				imageURLs = append(imageURLs, url)
-			}
-		} else {
-			textLines = append(textLines, line)
-		}
-	}
-	text = strings.Join(textLines, "\n")
-	// 去掉末尾多余的换行
-	text = strings.TrimRight(text, "\n")
-	return
-}
-
-// buildLLMContentParts 将消息内容转换为 llm-tool ContentPart 列表（支持多模态）
-func buildLLMContentParts(content string) []*llmpb.ContentPart {
-	text, imageURLs := parseMessageContent(content)
-
-	if len(imageURLs) == 0 {
-		// 纯文本消息
-		return []*llmpb.ContentPart{
-			{Type: "text", Text: content},
-		}
-	}
-
-	// 多模态消息：先放文本，再放图片
-	parts := make([]*llmpb.ContentPart, 0, 1+len(imageURLs))
-	if text != "" {
-		parts = append(parts, &llmpb.ContentPart{Type: "text", Text: text})
-	}
-	for _, url := range imageURLs {
-		parts = append(parts, &llmpb.ContentPart{
-			Type: "image_url",
-			ImageUrl: &llmpb.ImageURL{
-				Url:    url,
-				Detail: "auto",
-			},
-		})
-	}
-	return parts
-}
-
 // AgentServiceImpl Agent 服务实现
 type AgentServiceImpl struct {
 	reactEngine *reactagent.ReactEngine
@@ -141,7 +25,7 @@ type AgentServiceImpl struct {
 // NewAgentServiceImpl 创建 Agent 服务实现
 func NewAgentServiceImpl() *AgentServiceImpl {
 	return &AgentServiceImpl{
-		useReact: false, // 默认不启用 ReAct（需要数据库初始化后才能启用）
+		useReact: false,
 	}
 }
 
@@ -171,31 +55,29 @@ func (s *AgentServiceImpl) StreamChat(req *agent.AgentStreamChatRequest, stream 
 func (s *AgentServiceImpl) streamChatWithReact(req *agent.AgentStreamChatRequest, stream agent.AgentService_StreamChatServer, startTime time.Time) error {
 	ctx := stream.Context()
 
-	// 构建 Agent 上下文
 	agentCtx := &model.AgentContext{
 		ModelID:     req.ModelID,
 		ExtraParams: req.ExtraParams,
 	}
 
-	// 从 extra_params 中提取上下文信息
 	if req.ExtraParams != nil {
 		agentCtx.UserID = req.ExtraParams["user_id"]
 		agentCtx.UserRole = req.ExtraParams["user_role"]
 		agentCtx.SessionID = req.ExtraParams["session_id"]
+		agentCtx.ConversationId = req.ExtraParams["conversation_id"]
 		agentCtx.ProblemID = req.ExtraParams["problem_id"]
 		agentCtx.ProblemInfo = req.ExtraParams["problem_info"]
 		agentCtx.StudentCode = req.ExtraParams["student_code"]
 		agentCtx.JudgeResult = req.ExtraParams["judge_result"]
+		agentCtx.FailedCases = req.ExtraParams["failed_cases"]
 		agentCtx.Language = req.ExtraParams["language"]
 		agentCtx.ErrorMessage = req.ExtraParams["error_message"]
 	}
 
-	// 默认角色为学生
 	if agentCtx.UserRole == "" {
 		agentCtx.UserRole = model.RoleStudent
 	}
 
-	// 转换消息格式
 	for _, msg := range req.Messages {
 		agentCtx.Messages = append(agentCtx.Messages, model.ChatMessage{
 			Role:    msg.Role,
@@ -203,7 +85,6 @@ func (s *AgentServiceImpl) streamChatWithReact(req *agent.AgentStreamChatRequest
 		})
 	}
 
-	// 提取用户最后一条消息作为原始查询
 	for i := len(req.Messages) - 1; i >= 0; i-- {
 		if req.Messages[i].Role == "user" {
 			agentCtx.OriginalQuery = req.Messages[i].Content
@@ -211,7 +92,6 @@ func (s *AgentServiceImpl) streamChatWithReact(req *agent.AgentStreamChatRequest
 		}
 	}
 
-	// 执行 ReAct 编排
 	err := s.reactEngine.Execute(ctx, agentCtx, stream)
 	if err != nil {
 		log.Printf("[AgentService] ReAct 编排失败: %v，降级到直通模式", err)
@@ -225,7 +105,6 @@ func (s *AgentServiceImpl) streamChatWithReact(req *agent.AgentStreamChatRequest
 
 // streamChatDirect 直通模式的流式对话（原有逻辑）
 func (s *AgentServiceImpl) streamChatDirect(req *agent.AgentStreamChatRequest, stream agent.AgentService_StreamChatServer, startTime time.Time) error {
-	// 构建发送给 llm-tool 的消息列表
 	llmMessages := make([]*llmpb.ChatMessage, 0, len(req.Messages)+1)
 
 	if req.SystemPrompt != "" {
@@ -244,11 +123,10 @@ func (s *AgentServiceImpl) streamChatDirect(req *agent.AgentStreamChatRequest, s
 		})
 	}
 
-	// 构建 llm-tool 请求，透传 extra_params（包含 enable_thinking 等）
 	llmReq := &llmpb.StreamChatRequest{
 		ModelId:     req.ModelID,
 		Messages:    llmMessages,
-		ExtraParams: req.ExtraParams, // 透传前端传来的额外参数
+		ExtraParams: req.ExtraParams,
 	}
 
 	ctx := stream.Context()
@@ -258,13 +136,11 @@ func (s *AgentServiceImpl) streamChatDirect(req *agent.AgentStreamChatRequest, s
 		return fmt.Errorf("调用 LLM 服务失败: %w", err)
 	}
 
-	// 判断提供商（用于日志）
 	provider := "doubao"
 	if strings.HasPrefix(strings.ToLower(req.ModelID), "qwen") {
 		provider = "qwen"
 	}
 
-	// 收集完整回复用于日志
 	var fullResponseBuilder strings.Builder
 
 	for {
@@ -302,7 +178,6 @@ func (s *AgentServiceImpl) streamChatDirect(req *agent.AgentStreamChatRequest, s
 			totalTokens = llmResp.Usage.TotalTokens
 		}
 
-		// 累积完整回复
 		if content != "" {
 			fullResponseBuilder.WriteString(content)
 		}
@@ -326,7 +201,6 @@ func (s *AgentServiceImpl) streamChatDirect(req *agent.AgentStreamChatRequest, s
 		}
 	}
 
-	// 记录完整回复到日志文件
 	durationMs := time.Since(startTime).Milliseconds()
 	fullResponse := fullResponseBuilder.String()
 	if fullResponse != "" {

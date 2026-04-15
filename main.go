@@ -12,7 +12,7 @@ import (
 	"github.com/yzf120/elysia-chat-agent/rag"
 	"github.com/yzf120/elysia-chat-agent/router"
 	"github.com/yzf120/elysia-chat-agent/rpc"
-	"github.com/yzf120/elysia-chat-agent/service_impl"
+	"github.com/yzf120/elysia-chat-agent/service"
 	"trpc.group/trpc-go/trpc-go"
 )
 
@@ -49,14 +49,14 @@ func main() {
 	// 创建trpc服务器
 	s := trpc.NewServer()
 
-	// 根据环境变量决定是否启用 ReAct 编排
-	useReact := os.Getenv("ENABLE_REACT") == "true"
+	// 根据环境变量决定是否启用 ReAct 编排（兼容 ENABLE_REACT 和 REACT_ENABLED 两种写法）
+	useReact := os.Getenv("ENABLE_REACT") == "true" || os.Getenv("REACT_ENABLED") == "true"
 	if useReact {
 		db := dao.GetDB()
-		agent.RegisterAgentServiceService(s.Service("trpc.elysia.chat_agent.agent"), service_impl.NewAgentServiceImplWithDB(db))
+		agent.RegisterAgentServiceService(s.Service("trpc.elysia.chat_agent.agent"), service.NewAgentServiceImplWithDB(db))
 		log.Println("[启动] ReAct 编排模式已启用")
 	} else {
-		agent.RegisterAgentServiceService(s.Service("trpc.elysia.chat_agent.agent"), service_impl.NewAgentServiceImpl())
+		agent.RegisterAgentServiceService(s.Service("trpc.elysia.chat_agent.agent"), service.NewAgentServiceImpl())
 		log.Println("[启动] 直通模式（未启用 ReAct 编排）")
 	}
 

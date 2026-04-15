@@ -23,6 +23,19 @@ const (
 	IntentKnowledgeMgmt  = "KNOWLEDGE_MANAGE" // 知识库管理
 )
 
+// ==================== 意图识别结果 ====================
+
+// IntentResult 意图识别结果
+type IntentResult struct {
+	IntentCode        string            `json:"intent_code"`
+	IntentLevel1      string            `json:"intent_level1"`
+	IntentLevel2      string            `json:"intent_level2"`
+	Confidence        float64           `json:"confidence"`
+	Reasoning         string            `json:"reasoning"`
+	AgentRoute        string            `json:"agent_route"`
+	ExtractedEntities map[string]string `json:"extracted_entities,omitempty"`
+}
+
 // ==================== Agent 路由常量 ====================
 
 const (

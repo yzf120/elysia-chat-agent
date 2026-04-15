@@ -24,7 +24,7 @@ type IntentRouter struct {
 // NewIntentRouter 创建意图路由 Agent
 func NewIntentRouter(classifyModelID string) *IntentRouter {
 	if classifyModelID == "" {
-		classifyModelID = "doubao-seed-1-6-lite-251015" // 默认使用轻量模型做意图分类
+		classifyModelID = "qwen3-omni-flash" // 意图分类固定使用千问模型
 	}
 	return &IntentRouter{
 		classifyModelID: classifyModelID,
@@ -57,8 +57,49 @@ func (r *IntentRouter) Classify(ctx context.Context, agentCtx *model.AgentContex
 		}, nil
 	}
 
+	// ===== 运行记录加入对话：前置意图判断 =====
+	// 如果是从运行记录触发的对话，根据判题结果直接确定意图
+	if agentCtx.JudgeResult != "" {
+		switch agentCtx.JudgeResult {
+		case "accepted":
+			// 完全通过 → 强制走代码优化意图
+			log.Printf("[IntentRouter] 运行记录触发（完全通过），强制路由到 SOLVE_OPTIMIZE")
+			return &model.IntentResult{
+				IntentCode:   model.IntentSolveOptimize,
+				IntentLevel1: "解题相关",
+				IntentLevel2: "代码优化",
+				Confidence:   1.0,
+				Reasoning:    "运行记录加入对话：代码已全部通过，自动触发代码优化分析",
+				AgentRoute:   model.AgentRouteSolve,
+			}, nil
+		case "partial_pass":
+			// 部分通过 → 根据用户提示词由 LLM 判断是 SOLVE_OPTIMIZE 还是 SOLVE_BUG
+			log.Printf("[IntentRouter] 运行记录触发（部分通过），交由 LLM 判断意图（SOLVE_BUG / SOLVE_OPTIMIZE）")
+			// 继续走下面的 LLM 意图分类流程
+		}
+	}
+
 	// 构建意图分类请求
 	systemPrompt := prompt.IntentRouterSystemPrompt(agentCtx.UserRole)
+
+	// 构建带上下文的用户消息（让意图分类 LLM 能看到题目、代码等上下文）
+	classifyInput := userQuery
+	var contextParts []string
+	if agentCtx.ProblemInfo != "" {
+		contextParts = append(contextParts, "[当前题目信息] "+agentCtx.ProblemInfo)
+	}
+	if agentCtx.StudentCode != "" {
+		contextParts = append(contextParts, "[学生代码] "+agentCtx.StudentCode)
+	}
+	if agentCtx.JudgeResult != "" {
+		contextParts = append(contextParts, "[判题结果] "+agentCtx.JudgeResult)
+	}
+	if agentCtx.FailedCases != "" {
+		contextParts = append(contextParts, "[未通过用例] "+agentCtx.FailedCases)
+	}
+	if len(contextParts) > 0 {
+		classifyInput = strings.Join(contextParts, "\n") + "\n\n[用户提问] " + userQuery
+	}
 
 	messages := []*llmpb.ChatMessage{
 		{
@@ -70,7 +111,7 @@ func (r *IntentRouter) Classify(ctx context.Context, agentCtx *model.AgentContex
 		{
 			Role: "user",
 			Content: []*llmpb.ContentPart{
-				{Type: "text", Text: userQuery},
+				{Type: "text", Text: classifyInput},
 			},
 		},
 	}
