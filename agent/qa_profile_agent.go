@@ -8,6 +8,7 @@ import (
 	"log"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/yzf120/elysia-chat-agent/dao"
 	"github.com/yzf120/elysia-chat-agent/model"
@@ -93,7 +94,11 @@ func (a *QAProfileAgent) analyzeConversation(ctx context.Context, agentCtx *mode
 	systemPrompt := a.buildAnalysisPrompt()
 	userContent := a.buildAnalysisInput(agentCtx, aiResponse)
 
-	// 构建 LLM 请求
+	// 清理所有文本字段中的无效 UTF-8 字符，防止 protobuf 序列化失败
+	systemPrompt = sanitizeUTF8(systemPrompt)
+	userContent = sanitizeUTF8(userContent)
+
+	// 构建 LLM 请求（画像分析不需要深度思考，显式禁用以加速）
 	llmReq := &llmpb.StreamChatRequest{
 		ModelId: a.modelID,
 		Messages: []*llmpb.ChatMessage{
@@ -105,6 +110,9 @@ func (a *QAProfileAgent) analyzeConversation(ctx context.Context, agentCtx *mode
 				Role:    "user",
 				Content: []*llmpb.ContentPart{{Type: "text", Text: userContent}},
 			},
+		},
+		ExtraParams: map[string]string{
+			"enable_thinking": "false",
 		},
 	}
 
@@ -208,10 +216,11 @@ func (a *QAProfileAgent) buildAnalysisInput(agentCtx *model.AgentContext, aiResp
 	// 学生问题
 	sb.WriteString(fmt.Sprintf("[学生问题] %s\n\n", agentCtx.OriginalQuery))
 
-	// AI 回复（截取前 500 字符，避免 token 过多）
-	truncatedResponse := aiResponse
-	if len(truncatedResponse) > 500 {
-		truncatedResponse = truncatedResponse[:500] + "..."
+	// AI 回复（截取前 500 个 rune 字符，避免 token 过多，同时避免截断多字节字符）
+	truncatedResponse := sanitizeUTF8(aiResponse)
+	if utf8.RuneCountInString(truncatedResponse) > 500 {
+		runes := []rune(truncatedResponse)
+		truncatedResponse = string(runes[:500]) + "..."
 	}
 	sb.WriteString(fmt.Sprintf("[AI回复] %s\n", truncatedResponse))
 
@@ -224,6 +233,28 @@ func (a *QAProfileAgent) buildAnalysisInput(agentCtx *model.AgentContext, aiResp
 }
 
 // ==================== 辅助函数 ====================
+
+// sanitizeUTF8 清理字符串中的无效 UTF-8 字节，替换为空字符串
+// 防止 protobuf Marshal 时因 invalid UTF-8 报错
+func sanitizeUTF8(s string) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	// 逐 rune 遍历，跳过无效字节
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size <= 1 {
+			// 无效字节，跳过
+			i++
+			continue
+		}
+		b.WriteRune(r)
+		i += size
+	}
+	return b.String()
+}
 
 // extractJSON 从 LLM 响应中提取 JSON 字符串（处理可能的 markdown 代码块包裹）
 func extractJSON(text string) string {

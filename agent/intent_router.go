@@ -117,9 +117,13 @@ func (r *IntentRouter) Classify(ctx context.Context, agentCtx *model.AgentContex
 	}
 
 	// 调用 LLM 进行意图分类（非流式，收集完整响应）
+	// 意图分类不需要深度思考，显式禁用以加速
 	llmReq := &llmpb.StreamChatRequest{
 		ModelId:  r.classifyModelID,
 		Messages: messages,
+		ExtraParams: map[string]string{
+			"enable_thinking": "false",
+		},
 	}
 
 	llmStream, err := rpc.GetLLMClient().GetProxy().StreamChat(ctx, llmReq)

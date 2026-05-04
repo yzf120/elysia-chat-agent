@@ -49,10 +49,18 @@ func buildUserProfilePrompt(profile *model.UserProfile) string {
 		tagFreq := make(map[string]int)
 		resolvedCount := 0
 		unresolvedCount := 0
+		var totalDifficulty float64
+		var validDifficultyCount int
 		for i, qa := range profile.RecentQABehaviors {
 			sb.WriteString(fmt.Sprintf("%d. [%s] %s", i+1, qa.ConversationTime, qa.QuestionSummary))
 			if len(qa.KnowledgeTags) > 0 {
 				sb.WriteString(fmt.Sprintf("（涉及: %s）", strings.Join(qa.KnowledgeTags, "、")))
+			}
+			// 展示问题难度分（1-5分，分数越高难度越大）
+			if qa.DifficultyScore > 0 {
+				sb.WriteString(fmt.Sprintf(" [难度:%.1f]", qa.DifficultyScore))
+				totalDifficulty += qa.DifficultyScore
+				validDifficultyCount++
 			}
 			if qa.IsResolved == 1 {
 				sb.WriteString(" ✅已解决")
@@ -79,6 +87,43 @@ func buildUserProfilePrompt(profile *model.UserProfile) string {
 			sb.WriteString(fmt.Sprintf("**问题解决率**: %.0f%%（%d/%d）\n",
 				float64(resolvedCount)/float64(resolvedCount+unresolvedCount)*100,
 				resolvedCount, resolvedCount+unresolvedCount))
+		}
+
+		// 统计近期提问难度趋势，辅助 LLM 判断学生学习进阶方向
+		if validDifficultyCount >= 2 {
+			avgDifficulty := totalDifficulty / float64(validDifficultyCount)
+			sb.WriteString(fmt.Sprintf("**近期提问平均难度**: %.1f/5.0", avgDifficulty))
+
+			// 计算难度趋势：比较前半段和后半段的平均难度（记录按时间倒序，前半段=最近，后半段=较早）
+			mid := validDifficultyCount / 2
+			var recentSum, olderSum float64
+			var recentCnt, olderCnt int
+			idx := 0
+			for _, qa := range profile.RecentQABehaviors {
+				if qa.DifficultyScore > 0 {
+					if idx < mid {
+						recentSum += qa.DifficultyScore
+						recentCnt++
+					} else {
+						olderSum += qa.DifficultyScore
+						olderCnt++
+					}
+					idx++
+				}
+			}
+			if recentCnt > 0 && olderCnt > 0 {
+				recentAvg := recentSum / float64(recentCnt)
+				olderAvg := olderSum / float64(olderCnt)
+				diff := recentAvg - olderAvg
+				if diff > 0.5 {
+					sb.WriteString("（趋势: 📈上升，学生正在挑战更高难度的知识点）")
+				} else if diff < -0.5 {
+					sb.WriteString("（趋势: 📉下降，学生可能在回顾巩固基础知识）")
+				} else {
+					sb.WriteString("（趋势: ➡️平稳）")
+				}
+			}
+			sb.WriteString("\n")
 		}
 	}
 
@@ -138,6 +183,24 @@ func buildUserProfilePrompt(profile *model.UserProfile) string {
 			}
 			sb.WriteString(fmt.Sprintf("\n该学生近期在 %s 方面的问题尚未完全解决，如果本次问题涉及这些知识点，请更加耐心细致地讲解，并适当回顾基础概念。\n",
 				strings.Join(weakList, "、")))
+		}
+
+		// 基于难度趋势的动态教学深度调整策略
+		var totalDiff float64
+		var diffCnt int
+		for _, qa := range profile.RecentQABehaviors {
+			if qa.DifficultyScore > 0 {
+				totalDiff += qa.DifficultyScore
+				diffCnt++
+			}
+		}
+		if diffCnt >= 2 {
+			avgDiff := totalDiff / float64(diffCnt)
+			if avgDiff <= 2.0 {
+				sb.WriteString("\n该学生近期提问集中在基础难度（平均难度≤2.0），回答时请注重基础概念的讲解，多用示例和类比，避免引入过于复杂的高级概念。\n")
+			} else if avgDiff >= 3.5 {
+				sb.WriteString("\n该学生近期提问集中在中高难度（平均难度≥3.5），回答时可以适当深入算法细节和优化思路，减少基础概念的重复讲解。\n")
+			}
 		}
 	}
 

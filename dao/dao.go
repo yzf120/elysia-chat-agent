@@ -49,6 +49,14 @@ func InitDB() error {
 
 	log.Printf("数据库连接成功: %s@%s:%s/%s",
 		cfg.Database.User, cfg.Database.Host, cfg.Database.Port, cfg.Database.Name)
+
+	// 自动迁移知识库相关表（如果不存在则自动创建）
+	if err := DB.AutoMigrate(&KnowledgeDocument{}, &KnowledgeChunk{}); err != nil {
+		log.Printf("[DAO] 知识库表自动迁移警告: %v", err)
+	} else {
+		log.Println("[DAO] 知识库表自动迁移完成")
+	}
+
 	return nil
 }
 

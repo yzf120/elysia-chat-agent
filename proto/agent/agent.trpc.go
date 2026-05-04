@@ -35,6 +35,12 @@ type AgentServiceService interface {
 
 	// ListModels 查询支持的模型列表
 	ListModels(ctx context.Context, req *AgentListModelsRequest) (*AgentListModelsResponse, error)
+
+	// 知识库管理 RPC 接口
+	StoreKnowledge(ctx context.Context, req *StoreKnowledgeRequest) (*StoreKnowledgeResponse, error)
+	DeleteKnowledge(ctx context.Context, req *DeleteKnowledgeRequest) (*DeleteKnowledgeResponse, error)
+	ListKnowledge(ctx context.Context, req *ListKnowledgeRequest) (*ListKnowledgeResponse, error)
+	SearchKnowledge(ctx context.Context, req *SearchKnowledgeRequest) (*SearchKnowledgeResponse, error)
 }
 
 // AgentService_StreamChatServer 服务端流式接口
@@ -167,6 +173,78 @@ func AgentServiceService_ListModels_Handler(svr interface{}, ctx context.Context
 	return rsp, nil
 }
 
+func AgentServiceService_StoreKnowledge_Handler(svr interface{}, ctx context.Context, f server.FilterFunc) (interface{}, error) {
+	req := &StoreKnowledgeRequest{}
+	filters, err := f(req)
+	if err != nil {
+		return nil, err
+	}
+	handleFunc := func(ctx context.Context, reqbody interface{}) (interface{}, error) {
+		return svr.(AgentServiceService).StoreKnowledge(ctx, reqbody.(*StoreKnowledgeRequest))
+	}
+
+	var rsp interface{}
+	rsp, err = filters.Filter(ctx, req, handleFunc)
+	if err != nil {
+		return nil, err
+	}
+	return rsp, nil
+}
+
+func AgentServiceService_DeleteKnowledge_Handler(svr interface{}, ctx context.Context, f server.FilterFunc) (interface{}, error) {
+	req := &DeleteKnowledgeRequest{}
+	filters, err := f(req)
+	if err != nil {
+		return nil, err
+	}
+	handleFunc := func(ctx context.Context, reqbody interface{}) (interface{}, error) {
+		return svr.(AgentServiceService).DeleteKnowledge(ctx, reqbody.(*DeleteKnowledgeRequest))
+	}
+
+	var rsp interface{}
+	rsp, err = filters.Filter(ctx, req, handleFunc)
+	if err != nil {
+		return nil, err
+	}
+	return rsp, nil
+}
+
+func AgentServiceService_ListKnowledge_Handler(svr interface{}, ctx context.Context, f server.FilterFunc) (interface{}, error) {
+	req := &ListKnowledgeRequest{}
+	filters, err := f(req)
+	if err != nil {
+		return nil, err
+	}
+	handleFunc := func(ctx context.Context, reqbody interface{}) (interface{}, error) {
+		return svr.(AgentServiceService).ListKnowledge(ctx, reqbody.(*ListKnowledgeRequest))
+	}
+
+	var rsp interface{}
+	rsp, err = filters.Filter(ctx, req, handleFunc)
+	if err != nil {
+		return nil, err
+	}
+	return rsp, nil
+}
+
+func AgentServiceService_SearchKnowledge_Handler(svr interface{}, ctx context.Context, f server.FilterFunc) (interface{}, error) {
+	req := &SearchKnowledgeRequest{}
+	filters, err := f(req)
+	if err != nil {
+		return nil, err
+	}
+	handleFunc := func(ctx context.Context, reqbody interface{}) (interface{}, error) {
+		return svr.(AgentServiceService).SearchKnowledge(ctx, reqbody.(*SearchKnowledgeRequest))
+	}
+
+	var rsp interface{}
+	rsp, err = filters.Filter(ctx, req, handleFunc)
+	if err != nil {
+		return nil, err
+	}
+	return rsp, nil
+}
+
 // AgentServiceServer_ServiceDesc descriptor for server.RegisterService.
 var AgentServiceServer_ServiceDesc = server.ServiceDesc{
 	ServiceName:  "trpc.elysia.chat_agent.agent.AgentService",
@@ -196,6 +274,22 @@ var AgentServiceServer_ServiceDesc = server.ServiceDesc{
 		{
 			Name: "/trpc.elysia.chat_agent.agent.AgentService/ListModels",
 			Func: AgentServiceService_ListModels_Handler,
+		},
+		{
+			Name: "/trpc.elysia.chat_agent.agent.AgentService/StoreKnowledge",
+			Func: AgentServiceService_StoreKnowledge_Handler,
+		},
+		{
+			Name: "/trpc.elysia.chat_agent.agent.AgentService/DeleteKnowledge",
+			Func: AgentServiceService_DeleteKnowledge_Handler,
+		},
+		{
+			Name: "/trpc.elysia.chat_agent.agent.AgentService/ListKnowledge",
+			Func: AgentServiceService_ListKnowledge_Handler,
+		},
+		{
+			Name: "/trpc.elysia.chat_agent.agent.AgentService/SearchKnowledge",
+			Func: AgentServiceService_SearchKnowledge_Handler,
 		},
 	},
 	Streams: []server.StreamDesc{
@@ -242,6 +336,22 @@ func (s *UnimplementedAgentService) ListModels(ctx context.Context, req *AgentLi
 	return nil, errors.New("rpc ListModels of service AgentService is not implemented")
 }
 
+func (s *UnimplementedAgentService) StoreKnowledge(ctx context.Context, req *StoreKnowledgeRequest) (*StoreKnowledgeResponse, error) {
+	return nil, errors.New("rpc StoreKnowledge of service AgentService is not implemented")
+}
+
+func (s *UnimplementedAgentService) DeleteKnowledge(ctx context.Context, req *DeleteKnowledgeRequest) (*DeleteKnowledgeResponse, error) {
+	return nil, errors.New("rpc DeleteKnowledge of service AgentService is not implemented")
+}
+
+func (s *UnimplementedAgentService) ListKnowledge(ctx context.Context, req *ListKnowledgeRequest) (*ListKnowledgeResponse, error) {
+	return nil, errors.New("rpc ListKnowledge of service AgentService is not implemented")
+}
+
+func (s *UnimplementedAgentService) SearchKnowledge(ctx context.Context, req *SearchKnowledgeRequest) (*SearchKnowledgeResponse, error) {
+	return nil, errors.New("rpc SearchKnowledge of service AgentService is not implemented")
+}
+
 // END --------------------------------- Default Unimplemented Server Service --------------------------------- END
 
 // END ======================================= Server Service Definition ======================================= END
@@ -265,6 +375,12 @@ type AgentServiceClientProxy interface {
 
 	// ListModels 查询支持的模型列表
 	ListModels(ctx context.Context, req *AgentListModelsRequest, opts ...client.Option) (*AgentListModelsResponse, error)
+
+	// 知识库管理 RPC 接口
+	StoreKnowledge(ctx context.Context, req *StoreKnowledgeRequest, opts ...client.Option) (*StoreKnowledgeResponse, error)
+	DeleteKnowledge(ctx context.Context, req *DeleteKnowledgeRequest, opts ...client.Option) (*DeleteKnowledgeResponse, error)
+	ListKnowledge(ctx context.Context, req *ListKnowledgeRequest, opts ...client.Option) (*ListKnowledgeResponse, error)
+	SearchKnowledge(ctx context.Context, req *SearchKnowledgeRequest, opts ...client.Option) (*SearchKnowledgeResponse, error)
 }
 
 // AgentService_StreamChatClient 客户端流式接口
@@ -443,6 +559,86 @@ func (c *AgentServiceClientProxyImpl) ListModels(ctx context.Context, req *Agent
 	callopts = append(callopts, c.opts...)
 	callopts = append(callopts, opts...)
 	rsp := &AgentListModelsResponse{}
+	if err := c.client.Invoke(ctx, req, rsp, callopts...); err != nil {
+		return nil, err
+	}
+	return rsp, nil
+}
+
+func (c *AgentServiceClientProxyImpl) StoreKnowledge(ctx context.Context, req *StoreKnowledgeRequest, opts ...client.Option) (*StoreKnowledgeResponse, error) {
+	ctx, msg := codec.WithCloneMessage(ctx)
+	defer codec.PutBackMessage(msg)
+	msg.WithClientRPCName("/trpc.elysia.chat_agent.agent.AgentService/StoreKnowledge")
+	msg.WithCalleeServiceName(AgentServiceServer_ServiceDesc.ServiceName)
+	msg.WithCalleeApp("")
+	msg.WithCalleeServer("")
+	msg.WithCalleeService("AgentService")
+	msg.WithCalleeMethod("StoreKnowledge")
+	msg.WithSerializationType(codec.SerializationTypeJSON)
+	callopts := make([]client.Option, 0, len(c.opts)+len(opts))
+	callopts = append(callopts, c.opts...)
+	callopts = append(callopts, opts...)
+	rsp := &StoreKnowledgeResponse{}
+	if err := c.client.Invoke(ctx, req, rsp, callopts...); err != nil {
+		return nil, err
+	}
+	return rsp, nil
+}
+
+func (c *AgentServiceClientProxyImpl) DeleteKnowledge(ctx context.Context, req *DeleteKnowledgeRequest, opts ...client.Option) (*DeleteKnowledgeResponse, error) {
+	ctx, msg := codec.WithCloneMessage(ctx)
+	defer codec.PutBackMessage(msg)
+	msg.WithClientRPCName("/trpc.elysia.chat_agent.agent.AgentService/DeleteKnowledge")
+	msg.WithCalleeServiceName(AgentServiceServer_ServiceDesc.ServiceName)
+	msg.WithCalleeApp("")
+	msg.WithCalleeServer("")
+	msg.WithCalleeService("AgentService")
+	msg.WithCalleeMethod("DeleteKnowledge")
+	msg.WithSerializationType(codec.SerializationTypeJSON)
+	callopts := make([]client.Option, 0, len(c.opts)+len(opts))
+	callopts = append(callopts, c.opts...)
+	callopts = append(callopts, opts...)
+	rsp := &DeleteKnowledgeResponse{}
+	if err := c.client.Invoke(ctx, req, rsp, callopts...); err != nil {
+		return nil, err
+	}
+	return rsp, nil
+}
+
+func (c *AgentServiceClientProxyImpl) ListKnowledge(ctx context.Context, req *ListKnowledgeRequest, opts ...client.Option) (*ListKnowledgeResponse, error) {
+	ctx, msg := codec.WithCloneMessage(ctx)
+	defer codec.PutBackMessage(msg)
+	msg.WithClientRPCName("/trpc.elysia.chat_agent.agent.AgentService/ListKnowledge")
+	msg.WithCalleeServiceName(AgentServiceServer_ServiceDesc.ServiceName)
+	msg.WithCalleeApp("")
+	msg.WithCalleeServer("")
+	msg.WithCalleeService("AgentService")
+	msg.WithCalleeMethod("ListKnowledge")
+	msg.WithSerializationType(codec.SerializationTypeJSON)
+	callopts := make([]client.Option, 0, len(c.opts)+len(opts))
+	callopts = append(callopts, c.opts...)
+	callopts = append(callopts, opts...)
+	rsp := &ListKnowledgeResponse{}
+	if err := c.client.Invoke(ctx, req, rsp, callopts...); err != nil {
+		return nil, err
+	}
+	return rsp, nil
+}
+
+func (c *AgentServiceClientProxyImpl) SearchKnowledge(ctx context.Context, req *SearchKnowledgeRequest, opts ...client.Option) (*SearchKnowledgeResponse, error) {
+	ctx, msg := codec.WithCloneMessage(ctx)
+	defer codec.PutBackMessage(msg)
+	msg.WithClientRPCName("/trpc.elysia.chat_agent.agent.AgentService/SearchKnowledge")
+	msg.WithCalleeServiceName(AgentServiceServer_ServiceDesc.ServiceName)
+	msg.WithCalleeApp("")
+	msg.WithCalleeServer("")
+	msg.WithCalleeService("AgentService")
+	msg.WithCalleeMethod("SearchKnowledge")
+	msg.WithSerializationType(codec.SerializationTypeJSON)
+	callopts := make([]client.Option, 0, len(c.opts)+len(opts))
+	callopts = append(callopts, c.opts...)
+	callopts = append(callopts, opts...)
+	rsp := &SearchKnowledgeResponse{}
 	if err := c.client.Invoke(ctx, req, rsp, callopts...); err != nil {
 		return nil, err
 	}

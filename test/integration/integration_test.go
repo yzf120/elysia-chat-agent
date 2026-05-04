@@ -198,7 +198,7 @@ func TestIntegration_Ring3_LLMConnection(t *testing.T) {
 		defer cancel()
 
 		req := &llmpb.StreamChatRequest{
-			ModelId: "doubao-seed-1-6-lite-251015",
+			ModelId: "doubao-seed-2-0-lite-260215",
 			Messages: []*llmpb.ChatMessage{
 				{
 					Role:    "user",
@@ -759,14 +759,14 @@ func TestIntegration_Ring8_FullReActPipeline(t *testing.T) {
 			role:        model.RoleStudent,
 			problemInfo: "给定一个整数数组 nums 和一个目标值 target，请你在该数组中找出和为目标值的那两个整数，并返回它们的数组下标。",
 			language:    "C++",
-			modelID:     "doubao-seed-1-6-lite-251015",
+			modelID:     "doubao-seed-2-0-lite-260215",
 			expectRoute: model.AgentRouteSolve,
 		},
 		{
 			name:        "学生_知识概念_动态规划",
 			query:       "什么是动态规划？它的核心思想是什么？",
 			role:        model.RoleStudent,
-			modelID:     "doubao-seed-1-6-lite-251015",
+			modelID:     "doubao-seed-2-0-lite-260215",
 			expectRoute: model.AgentRouteKnowledge,
 		},
 		{
@@ -777,14 +777,14 @@ func TestIntegration_Ring8_FullReActPipeline(t *testing.T) {
 			studentCode: "#include<stdio.h>\nint main(){int a,b;scanf(\"%d%d\",&a,&b);printf(\"%d\",a-b);return 0;}",
 			language:    "C",
 			judgeResult: "wrong_answer",
-			modelID:     "doubao-seed-1-6-lite-251015",
+			modelID:     "doubao-seed-2-0-lite-260215",
 			expectRoute: model.AgentRouteSolve,
 		},
 		{
 			name:        "学生_闲聊",
 			query:       "你好呀，今天心情不错",
 			role:        model.RoleStudent,
-			modelID:     "doubao-seed-1-6-lite-251015",
+			modelID:     "doubao-seed-2-0-lite-260215",
 			expectRoute: model.AgentRouteFallback,
 		},
 	}

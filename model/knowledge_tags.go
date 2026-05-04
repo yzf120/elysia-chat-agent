@@ -1,5 +1,7 @@
 package model
 
+import "strings"
+
 // KnowledgeTag 知识点标签定义
 type KnowledgeTag struct {
 	Name       string `json:"name"`       // 标签名称
@@ -127,10 +129,25 @@ var KnowledgeTagLibrary = []KnowledgeTag{
 // KnowledgeTagMap 知识点标签名称到标签的映射（用于快速查找）
 var KnowledgeTagMap map[string]*KnowledgeTag
 
+// CategoryAvgDifficulty 分类名到该分类平均难度的映射（用于 LLM 返回分类名时的降级匹配）
+var CategoryAvgDifficulty map[string]int
+
 func init() {
 	KnowledgeTagMap = make(map[string]*KnowledgeTag, len(KnowledgeTagLibrary))
 	for i := range KnowledgeTagLibrary {
 		KnowledgeTagMap[KnowledgeTagLibrary[i].Name] = &KnowledgeTagLibrary[i]
+	}
+
+	// 计算每个分类的平均难度（用于降级匹配）
+	catSum := make(map[string]int)
+	catCount := make(map[string]int)
+	for _, tag := range KnowledgeTagLibrary {
+		catSum[tag.Category] += tag.Difficulty
+		catCount[tag.Category]++
+	}
+	CategoryAvgDifficulty = make(map[string]int, len(catSum))
+	for cat, sum := range catSum {
+		CategoryAvgDifficulty[cat] = (sum + catCount[cat]/2) / catCount[cat] // 四舍五入
 	}
 }
 
@@ -153,21 +170,53 @@ func GetKnowledgeTagNamesByCategory() map[string][]string {
 }
 
 // CalcDifficultyByTags 根据知识点标签计算加权平均难度
-// 返回值范围 1-5，未匹配到标签时返回 0
+// 返回值范围 1-5，兜底最低返回 1.0（不会返回 0）
+// 支持多种 LLM 返回格式的降级匹配：
+//  1. 精确匹配标签名（如 "栈"）
+//  2. 匹配分类名（如 "数据结构"），使用该分类平均难度
+//  3. 匹配 "分类: 标签名" 格式（如 "数据结构: 栈"），拆分后分别尝试匹配
+//  4. 以上全部未命中时，兜底返回 1.0
 func CalcDifficultyByTags(tagNames []string) float64 {
 	if len(tagNames) == 0 {
-		return 0
+		return 1.0 // 兜底：无标签时返回最低难度
 	}
 	totalDifficulty := 0
 	matchedCount := 0
 	for _, name := range tagNames {
+		name = strings.TrimSpace(name)
 		if tag, ok := KnowledgeTagMap[name]; ok {
+			// 精确匹配到具体标签
 			totalDifficulty += tag.Difficulty
 			matchedCount++
+		} else if avgDiff, ok := CategoryAvgDifficulty[name]; ok {
+			// 降级匹配：LLM 返回了分类名，使用该分类的平均难度
+			totalDifficulty += avgDiff
+			matchedCount++
+		} else if strings.Contains(name, ":") || strings.Contains(name, "：") {
+			// 降级匹配：LLM 返回了 "分类: 标签名" 格式（如 "数据结构: 栈"）
+			// 同时支持英文冒号和中文冒号
+			sep := ":"
+			if strings.Contains(name, "：") {
+				sep = "："
+			}
+			parts := strings.SplitN(name, sep, 2)
+			if len(parts) == 2 {
+				category := strings.TrimSpace(parts[0])
+				tagName := strings.TrimSpace(parts[1])
+				if tag, ok := KnowledgeTagMap[tagName]; ok {
+					// 标签名部分精确匹配
+					totalDifficulty += tag.Difficulty
+					matchedCount++
+				} else if avgDiff, ok := CategoryAvgDifficulty[category]; ok {
+					// 分类名部分匹配
+					totalDifficulty += avgDiff
+					matchedCount++
+				}
+			}
 		}
 	}
 	if matchedCount == 0 {
-		return 0
+		return 1.0 // 兜底：全部未命中时返回最低难度
 	}
 	return float64(totalDifficulty) / float64(matchedCount)
 }

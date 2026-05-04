@@ -9,8 +9,10 @@ import (
 	"time"
 
 	reactagent "github.com/yzf120/elysia-chat-agent/agent"
+	"github.com/yzf120/elysia-chat-agent/dao"
 	"github.com/yzf120/elysia-chat-agent/model"
 	agent "github.com/yzf120/elysia-chat-agent/proto/agent"
+	"github.com/yzf120/elysia-chat-agent/rag"
 	"github.com/yzf120/elysia-chat-agent/rpc"
 	llmpb "github.com/yzf120/elysia-llm-tool/proto/llm"
 	"gorm.io/gorm"
@@ -261,4 +263,197 @@ func (s *AgentServiceImpl) ListModels(ctx context.Context, req *agent.AgentListM
 
 	log.Printf("[AgentService] ListModels 返回 %d 个模型", len(models))
 	return &agent.AgentListModelsResponse{Models: models}, nil
+}
+
+// ==================== 知识库管理 RPC 实现 ====================
+
+// StoreKnowledge 存储知识条目到 RAG 知识库（MySQL持久化 + Redis索引）
+func (s *AgentServiceImpl) StoreKnowledge(ctx context.Context, req *agent.StoreKnowledgeRequest) (*agent.StoreKnowledgeResponse, error) {
+	log.Printf("[AgentService] StoreKnowledge 请求，id: %s, source_type: %s", req.ID, req.SourceType)
+
+	ragService := rag.GetRAGService()
+	if ragService == nil {
+		return &agent.StoreKnowledgeResponse{
+			Success: false,
+			Message: "RAG 服务未初始化",
+		}, nil
+	}
+
+	// 如果未指定 ID，自动生成
+	docID := req.ID
+	if docID == "" {
+		docID = fmt.Sprintf("kb_%d", time.Now().UnixNano())
+	}
+
+	// 构建文档记录，写入 MySQL + Redis
+	fileName := req.FileName
+	if fileName == "" {
+		fileName = req.SourceID // 兼容旧接口
+	}
+	fileType := req.FileType
+	if fileType == "" {
+		fileType = "text"
+	}
+
+	docRecord := &dao.KnowledgeDocument{
+		DocID:      docID,
+		FileName:   fileName,
+		FileSize:   req.FileSize,
+		FileType:   fileType,
+		Content:    req.Content,
+		SourceType: req.SourceType,
+		SourceID:   req.SourceID,
+		Tags:       req.Tags,
+	}
+
+	if err := ragService.StoreKnowledgeDocument(ctx, docRecord); err != nil {
+		log.Printf("[AgentService] StoreKnowledge 失败: %v", err)
+		return &agent.StoreKnowledgeResponse{
+			Success: false,
+			Message: fmt.Sprintf("存储失败: %v", err),
+		}, nil
+	}
+
+	// 计算预估处理时间
+	contentLen := len([]rune(req.Content))
+	estimatedSeconds := ragService.GetEstimatedProcessTime(contentLen)
+
+	log.Printf("[AgentService] StoreKnowledge 成功，id: %s，预计索引构建时间: %ds", docID, estimatedSeconds)
+	return &agent.StoreKnowledgeResponse{
+		Success:          true,
+		ID:               docID,
+		Message:          "文档已接收，正在后台构建索引",
+		EstimatedSeconds: int32(estimatedSeconds),
+	}, nil
+}
+
+// DeleteKnowledge 从 RAG 知识库中删除知识条目（MySQL + Redis 双删）
+func (s *AgentServiceImpl) DeleteKnowledge(ctx context.Context, req *agent.DeleteKnowledgeRequest) (*agent.DeleteKnowledgeResponse, error) {
+	log.Printf("[AgentService] DeleteKnowledge 请求，id: %s", req.ID)
+
+	ragService := rag.GetRAGService()
+	if ragService == nil {
+		return &agent.DeleteKnowledgeResponse{
+			Success: false,
+			Message: "RAG 服务未初始化",
+		}, nil
+	}
+
+	if err := ragService.DeleteKnowledgeDocument(ctx, req.ID); err != nil {
+		log.Printf("[AgentService] DeleteKnowledge 失败: %v", err)
+		return &agent.DeleteKnowledgeResponse{
+			Success: false,
+			Message: fmt.Sprintf("删除失败: %v", err),
+		}, nil
+	}
+
+	log.Printf("[AgentService] DeleteKnowledge 成功，id: %s（分块和索引异步清理中）", req.ID)
+	return &agent.DeleteKnowledgeResponse{
+		Success: true,
+		Message: "文档已删除，索引清理在后台进行",
+		Async:   true,
+	}, nil
+}
+
+// ListKnowledge 列出 RAG 知识库中的知识条目（从 MySQL 分页查询）
+func (s *AgentServiceImpl) ListKnowledge(ctx context.Context, req *agent.ListKnowledgeRequest) (*agent.ListKnowledgeResponse, error) {
+	log.Printf("[AgentService] ListKnowledge 请求，page: %d, page_size: %d", req.Page, req.PageSize)
+
+	ragService := rag.GetRAGService()
+	if ragService == nil {
+		return &agent.ListKnowledgeResponse{
+			Total: 0,
+			Items: nil,
+		}, nil
+	}
+
+	page := int(req.Page)
+	pageSize := int(req.PageSize)
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+
+	docs, total, err := ragService.ListKnowledgeDocuments(ctx, page, pageSize, "")
+	if err != nil {
+		log.Printf("[AgentService] ListKnowledge 失败: %v", err)
+		return &agent.ListKnowledgeResponse{
+			Total: 0,
+			Items: nil,
+		}, nil
+	}
+
+	items := make([]agent.KnowledgeDocItem, 0, len(docs))
+	for _, doc := range docs {
+		items = append(items, agent.KnowledgeDocItem{
+			ID:         doc.DocID,
+			Content:    doc.FileName, // 列表中返回文件名而非全文内容
+			SourceType: doc.SourceType,
+			SourceID:   doc.SourceID,
+			Tags:       doc.Tags,
+			FileName:   doc.FileName,
+			FileSize:   doc.FileSize,
+			FileType:   doc.FileType,
+			Status:     doc.Status,
+			CreateTime: doc.CreateTime.Format("2006-01-02 15:04:05"),
+		})
+	}
+
+	log.Printf("[AgentService] ListKnowledge 返回 %d 条，总计 %d 条", len(items), total)
+	return &agent.ListKnowledgeResponse{
+		Total: int32(total),
+		Items: items,
+	}, nil
+}
+
+// SearchKnowledge 检索 RAG 知识库
+func (s *AgentServiceImpl) SearchKnowledge(ctx context.Context, req *agent.SearchKnowledgeRequest) (*agent.SearchKnowledgeResponse, error) {
+	log.Printf("[AgentService] SearchKnowledge 请求，query: %s, top_k: %d", req.Query, req.TopK)
+
+	ragService := rag.GetRAGService()
+	if ragService == nil {
+		return &agent.SearchKnowledgeResponse{
+			Items: nil,
+		}, nil
+	}
+
+	topK := int(req.TopK)
+	if topK <= 0 {
+		topK = 5
+	}
+
+	query := &model.RAGQuery{
+		Query:      req.Query,
+		Keywords:   req.Keywords,
+		TopK:       topK,
+		Threshold:  0.3,
+		SourceType: req.SourceType,
+	}
+
+	docs, err := ragService.Retrieve(ctx, query)
+	if err != nil {
+		log.Printf("[AgentService] SearchKnowledge 失败: %v", err)
+		return &agent.SearchKnowledgeResponse{
+			Items: nil,
+		}, nil
+	}
+
+	items := make([]agent.KnowledgeSearchResult, 0, len(docs))
+	for _, doc := range docs {
+		items = append(items, agent.KnowledgeSearchResult{
+			ID:         doc.ID,
+			Content:    doc.Content,
+			SourceType: doc.SourceType,
+			SourceID:   doc.SourceID,
+			Tags:       doc.Tags,
+			Score:      doc.Score,
+		})
+	}
+
+	log.Printf("[AgentService] SearchKnowledge 返回 %d 条结果", len(items))
+	return &agent.SearchKnowledgeResponse{
+		Items: items,
+	}, nil
 }
