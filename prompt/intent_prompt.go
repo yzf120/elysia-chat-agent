@@ -68,8 +68,8 @@ const safetyConstraints = `
 - 不帮助学生作弊或绕过判题系统
 - 如果检测到学生试图获取完整答案，礼貌引导其自主思考`
 
-// injectProblemContext 注入题目上下文到 StringBuilder
-func injectProblemContext(sb *strings.Builder, ctx *model.AgentContext) {
+// InjectProblemContext 注入题目上下文到 StringBuilder（导出供 agent 包调用）
+func InjectProblemContext(sb *strings.Builder, ctx *model.AgentContext) {
 	if ctx.ProblemInfo != "" {
 		sb.WriteString(fmt.Sprintf("## 当前题目信息\n%s\n\n", ctx.ProblemInfo))
 	}
@@ -90,5 +90,5 @@ func injectProblemContext(sb *strings.Builder, ctx *model.AgentContext) {
 // stringBuilder 是 strings.Builder 的类型别名，方便在本包内使用
 type stringBuilder = fmt.Stringer
 
-// 注意：实际使用的是 strings.Builder，这里只是为了 injectProblemContext 的参数类型
+// 注意：实际使用的是 strings.Builder，这里只是为了 InjectProblemContext 的参数类型
 // 由于 Go 不支持类型别名用于方法调用，我们直接在各 prompt 文件中使用 strings.Builder

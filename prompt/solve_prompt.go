@@ -24,7 +24,7 @@ func SolveAgentSystemPrompt(ctx *model.AgentContext) string {
 	}
 
 	// 注入题目上下文
-	injectProblemContext(&sb, ctx)
+	InjectProblemContext(&sb, ctx)
 
 	// 注入未通过的测试用例详情（运行记录加入对话时传入）
 	if ctx.FailedCases != "" {

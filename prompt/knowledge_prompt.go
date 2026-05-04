@@ -24,7 +24,7 @@ func KnowledgeAgentSystemPrompt(ctx *model.AgentContext) string {
 	}
 
 	// 注入题目上下文
-	injectProblemContext(&sb, ctx)
+	InjectProblemContext(&sb, ctx)
 
 	intentCode := ""
 	if ctx.IntentResult != nil {

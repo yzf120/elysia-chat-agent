@@ -115,8 +115,16 @@ func (e *ReactEngine) Execute(ctx context.Context, agentCtx *model.AgentContext,
 	// ==================== Step 3: Thought - Prompt 组装 ====================
 	step3Start := time.Now()
 	log.Printf("[ReactEngine] Step 3: Prompt 组装...")
+	log.Printf("[ReactEngine][DEBUG] agentCtx 上下文: ProblemInfo长度=%d, StudentCode长度=%d, JudgeResult=%s, FailedCases长度=%d",
+		len(agentCtx.ProblemInfo), len(agentCtx.StudentCode), agentCtx.JudgeResult, len(agentCtx.FailedCases))
 
 	systemPrompt := e.buildSystemPrompt(agentCtx)
+
+	if len(systemPrompt) > 500 {
+		log.Printf("[ReactEngine][DEBUG] 系统提示词前500字符: %s", systemPrompt[:500])
+	} else {
+		log.Printf("[ReactEngine][DEBUG] 系统提示词全文: %s", systemPrompt)
+	}
 
 	trace.Steps = append(trace.Steps, model.ReActStep{
 		StepType:   "thought",
@@ -200,6 +208,7 @@ func (e *ReactEngine) buildSystemPrompt(agentCtx *model.AgentContext) string {
 	if agentCtx.IntentResult != nil && e.intentDAO != nil {
 		tpl, err := e.intentDAO.GetActivePromptTemplate(agentCtx.IntentResult.IntentCode, "system_prompt")
 		if err == nil && tpl != nil {
+			log.Printf("[ReactEngine][DEBUG] buildSystemPrompt: 使用数据库模板，intent=%s, 模板长度=%d", agentCtx.IntentResult.IntentCode, len(tpl.TemplateContent))
 			// 使用数据库中的模板，替换变量
 			content := tpl.TemplateContent
 			content = strings.ReplaceAll(content, "{problem_id}", agentCtx.ProblemID)
@@ -217,6 +226,12 @@ func (e *ReactEngine) buildSystemPrompt(agentCtx *model.AgentContext) string {
 				}
 			}
 
+			// 注入题目上下文（题目信息、学生代码、判题结果、未通过用例）
+			var sb strings.Builder
+			sb.WriteString(content)
+			prompt.InjectProblemContext(&sb, agentCtx)
+			content = sb.String()
+
 			// 注入 RAG 上下文
 			if agentCtx.RAGContext != "" {
 				content += "\n\n## 参考资料（来自知识库检索）\n" + agentCtx.RAGContext
@@ -227,6 +242,7 @@ func (e *ReactEngine) buildSystemPrompt(agentCtx *model.AgentContext) string {
 	}
 
 	// 降级使用代码中的提示词模板
+	log.Printf("[ReactEngine][DEBUG] buildSystemPrompt: 使用代码中的提示词模板（降级路径）")
 	return prompt.GetSystemPromptByIntent(agentCtx)
 }
 
